@@ -30,7 +30,7 @@ export default async (req) => {
       mode: "subscription",
       payment_method_types: ["card"],
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${origin}/dashboard?upgraded=true`,
+      success_url: `${origin}/dashboard?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${origin}/dashboard`,
       subscription_data: {
         metadata: { supabase_user_id: userId },

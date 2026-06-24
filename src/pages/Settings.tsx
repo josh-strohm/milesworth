@@ -14,6 +14,7 @@ export function Settings() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [upgraded, setUpgraded] = useState(searchParams.get('upgraded') === 'true');
+  const sessionId = searchParams.get('session_id');
   const [checkoutLoading, setCheckoutLoading] = useState('');
   const [checkoutError, setCheckoutError] = useState('');
 
@@ -26,33 +27,33 @@ export function Settings() {
       setBusinessName(p?.business_name || '');
 
       // Auto-sync subscription status from Stripe
-      if (p && !p.stripe_customer_id) {
-        try {
-          const res = await fetch('/api/sync-subscription', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: user.id, email: user.email }),
-          });
-          const data = await res.json();
-          if (data.status && data.status !== 'none') {
-            const updated = await getProfile(user.id);
-            setProfile(updated);
-          }
-        } catch (e) { /* ignore sync errors */ }
-      }
+      try {
+        const res = await fetch('/api/sync-subscription', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.id, email: user.email, sessionId: sessionId || undefined }),
+        });
+        const data = await res.json();
+        if (data.status && data.status !== 'none') {
+          const updated = await getProfile(user.id);
+          setProfile(updated);
+        }
+      } catch (e) { /* ignore sync errors */ }
     })();
   }, [user]);
 
   useEffect(() => {
-    if (upgraded && user) {
-      // Sync subscription from Stripe
+    const sid = searchParams.get('session_id');
+    if ((upgraded || sid) && user) {
       fetch('/api/sync-subscription', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id }),
-      }).then(() => getProfile(user.id).then(p => { setProfile(p); }))
-        .catch(() => {});
-      setTimeout(() => { setUpgraded(false); setSearchParams({}); }, 5000);
+        body: JSON.stringify({ userId: user.id, email: user.email, sessionId: sid || undefined }),
+      }).then(async () => {
+        const updated = await getProfile(user.id);
+        setProfile(updated);
+      }).catch(() => {});
+      setTimeout(() => { setUpgraded(false); setSearchParams({}); }, 8000);
     }
   }, [upgraded, user]);
 

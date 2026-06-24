@@ -4,21 +4,6 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// Direct REST calls — avoids Supabase JS client WebSocket issue on Node 20
-async function supabaseQuery(table, query = "") {
-  const url = `${SUPABASE_URL}/rest/v1/${table}?${query}`;
-  const res = await fetch(url, {
-    headers: {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      "Content-Type": "application/json",
-      Prefer: "return=representation",
-    },
-  });
-  if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
-  return res.json();
-}
-
 async function supabaseUpdate(table, match, body) {
   const params = Object.entries(match).map(([k, v]) => `${k}=eq.${encodeURIComponent(v)}`).join("&");
   const url = `${SUPABASE_URL}/rest/v1/${table}?${params}`;
@@ -28,7 +13,6 @@ async function supabaseUpdate(table, match, body) {
       apikey: SUPABASE_KEY,
       Authorization: `Bearer ${SUPABASE_KEY}`,
       "Content-Type": "application/json",
-      Prefer: "return=representation",
     },
     body: JSON.stringify(body),
   });
@@ -36,28 +20,49 @@ async function supabaseUpdate(table, match, body) {
   return res.json();
 }
 
-async function findCustomer(userId, email) {
-  // 1. Try by metadata
-  try {
-    const byMeta = await stripe.customers.search({
-      query: `metadata["supabase_user_id"]:"${userId}"`,
-      limit: 1,
-    });
-    if (byMeta.data.length > 0) return byMeta.data[0];
-  } catch (e) {
-    // Search API might not be available on all plans
-  }
-
-  // 2. Try by email
-  if (email) {
-    const byEmail = await stripe.customers.list({ email, limit: 1 });
-    if (byEmail.data.length > 0) return byEmail.data[0];
-  }
-
-  return null;
+async function supabaseQuery(table, query) {
+  const url = `${SUPABASE_URL}/rest/v1/${table}?${query}`;
+  const res = await fetch(url, {
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+    },
+  });
+  if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
+  return res.json();
 }
 
-async function updateProfile(userId, customerId, sub) {
+async function syncUserSubscription(userId, email) {
+  // Strategy 1: Look up via Stripe customer by email, find subscription
+  let customer;
+  if (email) {
+    const byEmail = await stripe.customers.list({ email, limit: 1 });
+    if (byEmail.data.length > 0) customer = byEmail.data[0];
+  }
+
+  // Strategy 2: Look up via profile's stored customer ID
+  if (!customer) {
+    const profiles = await supabaseQuery("profiles", `id=eq.${userId}&select=stripe_customer_id`);
+    if (profiles[0]?.stripe_customer_id) {
+      try {
+        customer = await stripe.customers.retrieve(profiles[0].stripe_customer_id);
+      } catch (e) { /* customer deleted */ }
+    }
+  }
+
+  if (!customer) return { status: "none", message: "No Stripe customer found" };
+
+  // Find all subscriptions for this customer
+  const subs = await stripe.subscriptions.list({ customer: customer.id, limit: 10 });
+
+  // Prefer active > trialing > past_due > canceled
+  const sub = subs.data.find(s => s.status === "active")
+    || subs.data.find(s => s.status === "trialing")
+    || subs.data.find(s => s.status === "past_due")
+    || subs.data[0];
+
+  if (!sub) return { status: "none", message: "No subscriptions found" };
+
   let status = "none";
   switch (sub.status) {
     case "active": status = "active"; break;
@@ -67,13 +72,12 @@ async function updateProfile(userId, customerId, sub) {
     case "unpaid": status = "canceled"; break;
   }
 
-  const updateData = {
+  await supabaseUpdate("profiles", { id: userId }, {
+    stripe_customer_id: customer.id,
     subscription_status: status,
     subscription_period_end: new Date(sub.current_period_end * 1000).toISOString(),
-  };
-  if (customerId) updateData.stripe_customer_id = customerId;
+  });
 
-  await supabaseUpdate("profiles", { id: userId }, updateData);
   return { status, period_end: sub.current_period_end };
 }
 
@@ -83,48 +87,43 @@ export default async (req) => {
   }
 
   try {
-    const { userId, email } = await req.json();
+    const { userId, email, sessionId } = await req.json();
     if (!userId) {
       return new Response(JSON.stringify({ error: "Missing userId" }), { status: 400 });
     }
 
-    // Get current profile
-    const profiles = await supabaseQuery("profiles", `id=eq.${userId}&select=stripe_customer_id`);
-    const profile = profiles[0];
-
-    // Find the Stripe customer
-    let customer;
-    if (profile?.stripe_customer_id) {
+    // If we have a session ID from checkout, use it directly
+    if (sessionId) {
       try {
-        customer = await stripe.customers.retrieve(profile.stripe_customer_id);
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+        const subscriptionId = session.subscription;
+        if (subscriptionId) {
+          const sub = await stripe.subscriptions.retrieve(subscriptionId);
+          let status = "none";
+          switch (sub.status) {
+            case "active": status = "active"; break;
+            case "trialing": status = "trialing"; break;
+            case "past_due": status = "past_due"; break;
+            case "canceled":
+            case "unpaid": status = "canceled"; break;
+          }
+
+          await supabaseUpdate("profiles", { id: userId }, {
+            stripe_customer_id: session.customer,
+            subscription_status: status,
+            subscription_period_end: new Date(sub.current_period_end * 1000).toISOString(),
+          });
+
+          return new Response(JSON.stringify({ status, period_end: sub.current_period_end }), { status: 200 });
+        }
       } catch (e) {
-        customer = await findCustomer(userId, email);
+        console.error("Session lookup failed, falling back to customer search:", e.message);
       }
-    } else {
-      customer = await findCustomer(userId, email);
     }
 
-    if (!customer) {
-      return new Response(JSON.stringify({ status: "none", message: "No Stripe customer found" }), { status: 200 });
-    }
-
-    // Find active subscription
-    const subs = await stripe.subscriptions.list({
-      customer: customer.id,
-      limit: 10,
-    });
-
-    const sub = subs.data.find(s =>
-      ["active", "trialing", "past_due"].includes(s.status)
-    ) || subs.data.find(s => s.status === "canceled") || subs.data[0];
-
-    if (sub) {
-      const needsCustomerId = !profile?.stripe_customer_id || profile.stripe_customer_id !== customer.id;
-      const result = await updateProfile(userId, needsCustomerId ? customer.id : null, sub);
-      return new Response(JSON.stringify(result), { status: 200 });
-    }
-
-    return new Response(JSON.stringify({ status: "none", message: "No subscriptions found" }), { status: 200 });
+    // Fallback: search by customer email/ID
+    const result = await syncUserSubscription(userId, email);
+    return new Response(JSON.stringify(result), { status: 200 });
   } catch (error) {
     console.error("Sync subscription error:", error);
     return new Response(JSON.stringify({ error: error.message }), { status: 500 });

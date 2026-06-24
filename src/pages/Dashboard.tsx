@@ -38,16 +38,20 @@ export function Dashboard() {
 
   // Sync subscription status after returning from Stripe checkout
   useEffect(() => {
-    if (!user || searchParams.get('upgraded') !== 'true') return;
+    const sessionId = searchParams.get('session_id');
+    if (!user || !sessionId) return;
     fetch('/api/sync-subscription', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: user.id, email: user.email }),
-    }).then(() => {
+      body: JSON.stringify({ userId: user.id, email: user.email, sessionId }),
+    }).then(async (res) => {
+      const data = await res.json();
+      console.log('Sync result:', data);
       // Reload profile to reflect updated status
-      getProfile(user.id).then(p => setProfile(p));
+      const p = await getProfile(user.id);
+      setProfile(p);
       setSearchParams({});
-    }).catch(() => setSearchParams({}));
+    }).catch((e) => { console.error('Sync failed:', e); setSearchParams({}); });
   }, [user, searchParams]);
 
   const displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'there';
