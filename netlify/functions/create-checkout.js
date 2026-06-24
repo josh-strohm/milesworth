@@ -33,7 +33,6 @@ export default async (req) => {
       success_url: `${origin}/dashboard?upgraded=true`,
       cancel_url: `${origin}/dashboard`,
       subscription_data: {
-        trial_period_days: 7,
         metadata: { supabase_user_id: userId },
       },
       metadata: { supabase_user_id: userId },

@@ -24,14 +24,37 @@ export function Settings() {
       setProfile(p);
       setFullName(p?.full_name || '');
       setBusinessName(p?.business_name || '');
+
+      // Auto-sync subscription status from Stripe
+      if (p && !p.stripe_customer_id) {
+        try {
+          const res = await fetch('/api/sync-subscription', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: user.id }),
+          });
+          const data = await res.json();
+          if (data.status && data.status !== 'none') {
+            const updated = await getProfile(user.id);
+            setProfile(updated);
+          }
+        } catch (e) { /* ignore sync errors */ }
+      }
     })();
   }, [user]);
 
   useEffect(() => {
-    if (upgraded) {
+    if (upgraded && user) {
+      // Sync subscription from Stripe
+      fetch('/api/sync-subscription', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id }),
+      }).then(() => getProfile(user.id).then(p => { setProfile(p); }))
+        .catch(() => {});
       setTimeout(() => { setUpgraded(false); setSearchParams({}); }, 5000);
     }
-  }, [upgraded]);
+  }, [upgraded, user]);
 
   const handleSave = async () => {
     if (!user) return;

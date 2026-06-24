@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { getYTDTrips, getTrips } from '@/lib/trips';
 import { getProfile, isPro, FREE_TRIP_LIMIT, canLogTrip } from '@/lib/subscription';
@@ -14,6 +14,7 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<any>(null);
   const [monthTrips, setMonthTrips] = useState(0);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
     if (!user) return;
@@ -34,6 +35,20 @@ export function Dashboard() {
       setLoading(false);
     })();
   }, [user]);
+
+  // Sync subscription status after returning from Stripe checkout
+  useEffect(() => {
+    if (!user || searchParams.get('upgraded') !== 'true') return;
+    fetch('/api/sync-subscription', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user.id }),
+    }).then(() => {
+      // Reload profile to reflect updated status
+      getProfile(user.id).then(p => setProfile(p));
+      setSearchParams({});
+    }).catch(() => setSearchParams({}));
+  }, [user, searchParams]);
 
   const displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'there';
   const businessMiles = trips.filter(t => t.category === 'business').reduce((sum, t) => sum + t.distance_miles, 0);
