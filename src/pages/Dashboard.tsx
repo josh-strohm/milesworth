@@ -42,7 +42,7 @@ export function Dashboard() {
     fetch('/api/sync-subscription', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: user.id }),
+      body: JSON.stringify({ userId: user.id, email: user.email }),
     }).then(() => {
       // Reload profile to reflect updated status
       getProfile(user.id).then(p => setProfile(p));

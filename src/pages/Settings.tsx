@@ -31,7 +31,7 @@ export function Settings() {
           const res = await fetch('/api/sync-subscription', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: user.id }),
+            body: JSON.stringify({ userId: user.id, email: user.email }),
           });
           const data = await res.json();
           if (data.status && data.status !== 'none') {
