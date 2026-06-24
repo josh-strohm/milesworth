@@ -1,13 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useAuth } from '@/contexts/AuthContext';
 import { updateTrip } from '@/lib/trips';
-import { getVehicles } from '@/lib/vehicles';
-import type { Vehicle, TripCategory } from '@/types';
+import type { TripCategory } from '@/types';
 import { supabase } from '@/lib/supabase-client';
 
 export function TripReview() {
-  const { user } = useAuth();
   const navigate = useNavigate();
   const { id } = useParams();
   const [category, setCategory] = useState<TripCategory>('business');

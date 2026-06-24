@@ -53,7 +53,8 @@ export function Settings() {
         const updated = await getProfile(user.id);
         setProfile(updated);
       }).catch(() => {});
-      setTimeout(() => { setUpgraded(false); setSearchParams({}); }, 8000);
+      const timer = setTimeout(() => { setUpgraded(false); setSearchParams({}); }, 8000);
+      return () => clearTimeout(timer);
     }
   }, [upgraded, user]);
 
