@@ -14,6 +14,8 @@ export function Settings() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [upgraded, setUpgraded] = useState(searchParams.get('upgraded') === 'true');
+  const [checkoutLoading, setCheckoutLoading] = useState('');
+  const [checkoutError, setCheckoutError] = useState('');
 
   useEffect(() => {
     if (!user) return;
@@ -46,6 +48,27 @@ export function Settings() {
     if (!profile?.stripe_customer_id) return;
     const url = await openCustomerPortal(profile.stripe_customer_id);
     if (url) window.location.href = url;
+  };
+
+  const handleUpgrade = async (priceId: string, planId: string) => {
+    if (!user || !priceId) return;
+    setCheckoutLoading(planId); setCheckoutError('');
+    try {
+      const res = await fetch('/api/create-checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priceId, userId: user.id, email: user.email }),
+      });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        setCheckoutError(data.error || 'Failed to start checkout');
+      }
+    } catch (e) {
+      setCheckoutError('Network error. Please try again.');
+    }
+    setCheckoutLoading('');
   };
 
   const userIsPro = isPro(profile);
@@ -114,8 +137,20 @@ export function Settings() {
         ) : (
           <div className="space-y-3">
             <p className="text-gray-400 text-sm">Free tier · 5 trips/month</p>
+
+            {checkoutError && (
+              <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg p-3">{checkoutError}</div>
+            )}
+
             {PLANS.map(plan => (
-              <div key={plan.id} className="bg-dark-700 rounded-lg p-3 border border-dark-600">
+              <button
+                key={plan.id}
+                onClick={() => handleUpgrade(plan.priceId, plan.id)}
+                disabled={!plan.priceId || checkoutLoading !== ''}
+                className={`w-full bg-dark-700 rounded-lg p-4 border transition-colors text-left ${
+                  plan.yearly ? 'border-brand-600/50 hover:border-brand-500' : 'border-dark-600 hover:border-dark-500'
+                } ${checkoutLoading === plan.id ? 'opacity-50' : ''}`}
+              >
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-2">
@@ -124,13 +159,23 @@ export function Settings() {
                         <span className="text-xs bg-brand-600 text-white px-2 py-0.5 rounded-full">{plan.badge}</span>
                       )}
                     </div>
-                    <p className="text-xs text-gray-400 mt-0.5">
+                    <p className="text-xs text-gray-400 mt-1">
                       {plan.yearly ? '$3.25/mo billed annually' : '7-day free trial'}
                     </p>
                   </div>
+                  <div className="text-right">
+                    {checkoutLoading === plan.id ? (
+                      <span className="text-xs text-brand-400">Redirecting...</span>
+                    ) : (
+                      <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                      </svg>
+                    )}
+                  </div>
                 </div>
-              </div>
+              </button>
             ))}
+
             <p className="text-xs text-gray-500 text-center">All plans include: Unlimited trips, GPS auto-detect, IRS reports</p>
           </div>
         )}
