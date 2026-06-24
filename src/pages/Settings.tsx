@@ -1,16 +1,19 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { getProfile, updateProfile, isPro } from '@/lib/subscription';
+import { getProfile, updateProfile, isPro, openCustomerPortal } from '@/lib/subscription';
+import { PLANS } from '@/config/stripe';
 import type { Profile } from '@/types';
 
 export function Settings() {
   const { user, signOut } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [fullName, setFullName] = useState('');
   const [businessName, setBusinessName] = useState('');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [upgraded, setUpgraded] = useState(searchParams.get('upgraded') === 'true');
 
   useEffect(() => {
     if (!user) return;
@@ -21,6 +24,12 @@ export function Settings() {
       setBusinessName(p?.business_name || '');
     })();
   }, [user]);
+
+  useEffect(() => {
+    if (upgraded) {
+      setTimeout(() => { setUpgraded(false); setSearchParams({}); }, 5000);
+    }
+  }, [upgraded]);
 
   const handleSave = async () => {
     if (!user) return;
@@ -33,11 +42,24 @@ export function Settings() {
     setSaving(false);
   };
 
+  const handlePortal = async () => {
+    if (!profile?.stripe_customer_id) return;
+    const url = await openCustomerPortal(profile.stripe_customer_id);
+    if (url) window.location.href = url;
+  };
+
   const userIsPro = isPro(profile);
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Settings</h1>
+
+      {/* Upgrade success banner */}
+      {upgraded && (
+        <div className="bg-green-500/10 border border-green-500/30 text-green-400 text-sm rounded-lg p-3">
+          Welcome to Pro! Your account has been upgraded.
+        </div>
+      )}
 
       {/* Profile */}
       <div className="bg-dark-800 rounded-xl p-4 border border-dark-700 space-y-3">
@@ -74,17 +96,42 @@ export function Settings() {
       <div className="bg-dark-800 rounded-xl p-4 border border-dark-700">
         <h2 className="text-sm font-semibold text-gray-300 mb-2">Billing</h2>
         {userIsPro ? (
-          <p className="text-green-400 text-sm">Pro plan active</p>
-        ) : (
           <div>
-            <p className="text-gray-400 text-sm mb-2">Free tier · 5 trips/month</p>
-            <div className="bg-dark-700 rounded-lg p-3 border border-dark-600">
-              <p className="text-sm text-gray-200 font-medium">Upgrade to Pro</p>
-              <p className="text-xs text-gray-400 mt-1">$5/mo or $39/yr · Unlimited trips + GPS</p>
-              <button disabled className="w-full mt-2 bg-dark-600 text-gray-500 font-medium py-2 rounded-lg cursor-not-allowed text-sm">
-                Coming in Week 3
-              </button>
-            </div>
+            <p className="text-green-400 text-sm mb-2">
+              Pro plan · {profile?.subscription_status === 'trialing' ? 'Free trial active' : 'Active'}
+            </p>
+            {profile?.subscription_period_end && (
+              <p className="text-xs text-gray-500 mb-3">
+                {profile.subscription_status === 'trialing' ? 'Trial ends' : 'Renews'}{' '}
+                {new Date(profile.subscription_period_end).toLocaleDateString()}
+              </p>
+            )}
+            <button onClick={handlePortal}
+              className="w-full bg-dark-700 hover:bg-dark-600 border border-dark-600 text-gray-200 font-medium py-2 rounded-lg transition-colors text-sm">
+              Manage subscription
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-gray-400 text-sm">Free tier · 5 trips/month</p>
+            {PLANS.map(plan => (
+              <div key={plan.id} className="bg-dark-700 rounded-lg p-3 border border-dark-600">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-200">{plan.price}{plan.period}</span>
+                      {plan.badge && (
+                        <span className="text-xs bg-brand-600 text-white px-2 py-0.5 rounded-full">{plan.badge}</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {plan.yearly ? '$3.25/mo billed annually' : '7-day free trial'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+            <p className="text-xs text-gray-500 text-center">All plans include: Unlimited trips, GPS auto-detect, IRS reports</p>
           </div>
         )}
       </div>

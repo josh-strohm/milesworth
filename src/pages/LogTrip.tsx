@@ -55,7 +55,7 @@ export function LogTrip() {
         auto_detected: false,
         user_confirmed: true,
       });
-      navigate('/trips');
+      navigate('/dashboard');
     } catch (e: any) { setError(e.message); }
     setSaving(false);
   };

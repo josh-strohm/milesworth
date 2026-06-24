@@ -91,7 +91,7 @@ export function ActiveTrip() {
         user_confirmed: false,
       });
       setPhase('done');
-      setTimeout(() => navigate('/trips'), 1500);
+      setTimeout(() => navigate('/dashboard'), 1500);
     } catch (e: any) {
       setError(e.message);
       setPhase('tracking');

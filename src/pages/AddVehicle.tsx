@@ -18,7 +18,7 @@ export function AddVehicle({ onAdded }: { onAdded?: () => void }) {
     try {
       await addVehicle(user.id, name.trim(), plate.trim() || undefined, true);
       if (onAdded) onAdded();
-      else navigate('/');
+      else navigate('/dashboard');
     } catch (e: any) { setError(e.message); }
     setSaving(false);
   };

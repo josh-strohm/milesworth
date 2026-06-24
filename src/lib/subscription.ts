@@ -22,3 +22,13 @@ export function canLogTrip(profile: Profile | null, currentMonthTrips: number): 
   if (isPro(profile)) return true;
   return currentMonthTrips < FREE_TRIP_LIMIT;
 }
+
+export async function openCustomerPortal(customerId: string): Promise<string | null> {
+  const res = await fetch('/api/create-portal', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customerId }),
+  });
+  const data = await res.json();
+  return data.url || null;
+}
