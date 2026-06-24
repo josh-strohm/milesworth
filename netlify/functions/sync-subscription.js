@@ -1,19 +1,52 @@
 import Stripe from "stripe";
-import { createClient } from "@supabase/supabase-js";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+// Direct REST calls — avoids Supabase JS client WebSocket issue on Node 20
+async function supabaseQuery(table, query = "") {
+  const url = `${SUPABASE_URL}/rest/v1/${table}?${query}`;
+  const res = await fetch(url, {
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+    },
+  });
+  if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+async function supabaseUpdate(table, match, body) {
+  const params = Object.entries(match).map(([k, v]) => `${k}=eq.${encodeURIComponent(v)}`).join("&");
+  const url = `${SUPABASE_URL}/rest/v1/${table}?${params}`;
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
+  return res.json();
+}
 
 async function findCustomer(userId, email) {
   // 1. Try by metadata
-  const byMeta = await stripe.customers.search({
-    query: `metadata["supabase_user_id"]:"${userId}"`,
-    limit: 1,
-  });
-  if (byMeta.data.length > 0) return byMeta.data[0];
+  try {
+    const byMeta = await stripe.customers.search({
+      query: `metadata["supabase_user_id"]:"${userId}"`,
+      limit: 1,
+    });
+    if (byMeta.data.length > 0) return byMeta.data[0];
+  } catch (e) {
+    // Search API might not be available on all plans
+  }
 
   // 2. Try by email
   if (email) {
@@ -24,7 +57,7 @@ async function findCustomer(userId, email) {
   return null;
 }
 
-async function updateProfileFromSub(userId, sub) {
+async function updateProfile(userId, customerId, sub) {
   let status = "none";
   switch (sub.status) {
     case "active": status = "active"; break;
@@ -34,12 +67,13 @@ async function updateProfileFromSub(userId, sub) {
     case "unpaid": status = "canceled"; break;
   }
 
-  await supabase.from("profiles").update({
-    stripe_customer_id: sub.customer,
+  const updateData = {
     subscription_status: status,
     subscription_period_end: new Date(sub.current_period_end * 1000).toISOString(),
-  }).eq("id", userId);
+  };
+  if (customerId) updateData.stripe_customer_id = customerId;
 
+  await supabaseUpdate("profiles", { id: userId }, updateData);
   return { status, period_end: sub.current_period_end };
 }
 
@@ -55,11 +89,8 @@ export default async (req) => {
     }
 
     // Get current profile
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("stripe_customer_id")
-      .eq("id", userId)
-      .single();
+    const profiles = await supabaseQuery("profiles", `id=eq.${userId}&select=stripe_customer_id`);
+    const profile = profiles[0];
 
     // Find the Stripe customer
     let customer;
@@ -67,7 +98,6 @@ export default async (req) => {
       try {
         customer = await stripe.customers.retrieve(profile.stripe_customer_id);
       } catch (e) {
-        // Customer ID was invalid, search fresh
         customer = await findCustomer(userId, email);
       }
     } else {
@@ -76,13 +106,6 @@ export default async (req) => {
 
     if (!customer) {
       return new Response(JSON.stringify({ status: "none", message: "No Stripe customer found" }), { status: 200 });
-    }
-
-    // Save customer ID if not already saved
-    if (!profile?.stripe_customer_id || profile.stripe_customer_id !== customer.id) {
-      await supabase.from("profiles").update({
-        stripe_customer_id: customer.id,
-      }).eq("id", userId);
     }
 
     // Find active subscription
@@ -96,7 +119,8 @@ export default async (req) => {
     ) || subs.data.find(s => s.status === "canceled") || subs.data[0];
 
     if (sub) {
-      const result = await updateProfileFromSub(userId, sub);
+      const needsCustomerId = !profile?.stripe_customer_id || profile.stripe_customer_id !== customer.id;
+      const result = await updateProfile(userId, needsCustomerId ? customer.id : null, sub);
       return new Response(JSON.stringify(result), { status: 200 });
     }
 

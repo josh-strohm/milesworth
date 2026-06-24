@@ -1,11 +1,23 @@
 import Stripe from "stripe";
-import { createClient } from "@supabase/supabase-js";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+async function supabaseUpdate(table, match, body) {
+  const params = Object.entries(match).map(([k, v]) => `${k}=eq.${encodeURIComponent(v)}`).join("&");
+  const url = `${SUPABASE_URL}/rest/v1/${table}?${params}`;
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
+}
 
 export default async (req) => {
   if (req.method !== "POST") {
@@ -33,10 +45,10 @@ export default async (req) => {
         const userId = session.metadata?.supabase_user_id;
         const customerId = session.customer;
         if (userId) {
-          await supabase.from("profiles").update({
+          await supabaseUpdate("profiles", { id: userId }, {
             stripe_customer_id: customerId,
             subscription_status: "active",
-          }).eq("id", userId);
+          });
         }
         break;
       }
@@ -57,10 +69,10 @@ export default async (req) => {
           default: status = "none";
         }
 
-        await supabase.from("profiles").update({
+        await supabaseUpdate("profiles", { id: userId }, {
           subscription_status: status,
           subscription_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
-        }).eq("id", userId);
+        });
         break;
       }
 
@@ -68,9 +80,9 @@ export default async (req) => {
         const subscription = event.data.object;
         const userId = subscription.metadata?.supabase_user_id;
         if (userId) {
-          await supabase.from("profiles").update({
+          await supabaseUpdate("profiles", { id: userId }, {
             subscription_status: "canceled",
-          }).eq("id", userId);
+          });
         }
         break;
       }
@@ -81,9 +93,9 @@ export default async (req) => {
         const subscription = await stripe.subscriptions.retrieve(subscriptionId);
         const userId = subscription.metadata?.supabase_user_id;
         if (userId) {
-          await supabase.from("profiles").update({
+          await supabaseUpdate("profiles", { id: userId }, {
             subscription_status: "past_due",
-          }).eq("id", userId);
+          });
         }
         break;
       }
