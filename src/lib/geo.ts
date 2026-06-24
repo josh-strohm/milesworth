@@ -20,36 +20,70 @@ export interface GeoPosition {
   lng: number;
 }
 
+export function isIOS(): boolean {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+export function isPWA(): boolean {
+  return window.navigator.standalone === true ||
+    window.matchMedia('(display-mode: standalone)').matches;
+}
+
 export function getCurrentPosition(options?: PositionOptions): Promise<GeoPosition> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
-      reject(new Error('Geolocation is not supported by this browser'));
+      reject(new Error('Geolocation is not supported by this browser.'));
       return;
     }
+
+    // iOS requires user gesture context — ensure we're called from a click handler
+    // Also iOS Safari in PWA mode needs enableHighAccuracy: true for better results
+    const opts: PositionOptions = {
+      enableHighAccuracy: true,
+      timeout: 30000,       // iOS can be slow to get first fix
+      maximumAge: 0,        // Don't use cached position
+      ...options,
+    };
+
     navigator.geolocation.getCurrentPosition(
       (position) => {
         resolve({ lat: position.coords.latitude, lng: position.coords.longitude });
       },
       (error) => {
+        let message: string;
         switch (error.code) {
           case error.PERMISSION_DENIED:
-            reject(new Error('Location access denied. Please enable location permissions.'));
+            if (isIOS()) {
+              message = 'Location access was denied. On iPhone, go to Settings → Privacy & Security → Location Services → Safari (or your browser) → set to "While Using". Then try again.';
+            } else {
+              message = 'Location access denied. Please enable location permissions in your browser settings and try again.';
+            }
             break;
           case error.POSITION_UNAVAILABLE:
-            reject(new Error('Location information unavailable.'));
+            message = 'Location information is unavailable. Make sure GPS is enabled on your device.';
             break;
           case error.TIMEOUT:
-            reject(new Error('Location request timed out.'));
+            message = 'Location request timed out. Make sure you have a clear view of the sky and try again.';
             break;
           default:
-            reject(new Error('An unknown error occurred getting location.'));
+            message = 'Unable to get your location. You can manually log this trip instead.';
         }
+        reject(new Error(message));
       },
-      {
-        enableHighAccuracy: options?.enableHighAccuracy ?? false,
-        timeout: options?.timeout ?? 10000,
-        maximumAge: options?.maximumAge ?? 60000,
-      }
+      opts
     );
   });
+}
+
+// Check if geolocation permission is already granted
+export async function checkGeolocationPermission(): Promise<PermissionState | 'unavailable'> {
+  if (!navigator.geolocation) return 'unavailable';
+  if (!navigator.permissions) return 'unavailable';
+  try {
+    const result = await navigator.permissions.query({ name: 'geolocation' });
+    return result.state;
+  } catch {
+    return 'unavailable';
+  }
 }
